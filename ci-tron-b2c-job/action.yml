@@ -1,0 +1,46 @@
+name: 'ci-tron Boot2Container Job'
+description: 'Boot2Container-based ci-tron integration (equivalent to .ci-tron-b2c-job-v1)'
+branding:
+  icon: 'box'
+  color: 'blue'
+
+inputs:
+  image:
+    description: 'Container image to run'
+    required: true
+
+  command:
+    description: 'Command(s) to execute'
+    required: true
+
+outputs:
+  exit_code:
+    description: 'Job exit code'
+    value: ${{ steps.ci-tron-job.outputs.exit_code }}
+
+  status:
+    description: 'Job status'
+    value: ${{ steps.ci-tron-job.outputs.status }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Run ci-tron B2C job
+      id: ci-tron-job
+      shell: bash
+      env:
+        JOB_TYPE: ci-tron-b2c-job
+        CI_TRON_EXECUTORCTL_IMAGE: ${{ inputs.executorctl_image }}
+        CI_TRON_JOB_SCRIPT_PATH: ${{ github.run_id }}.sh
+        CI_JOB_NAME_SLUG: ${{ github.job }}-${{ github.run_id }}
+        CI_RUNNER_DESCRIPTION: ${{ runner.name }}
+        CI_PROJECT_DIR: ${{ github.action_path }}
+
+        # B2C required configuration
+        CI_TRON__B2C_IMAGE_UNDER_TEST: ${{ inputs.image }}
+        CI_TRON__B2C_EXEC_CMD: ${{ inputs.command }}
+      run: |
+        set -eu
+
+        # Execute shared ci-tron job script
+        bash ${{ github.action_path }}/../scripts/run-ci-tron-job.sh

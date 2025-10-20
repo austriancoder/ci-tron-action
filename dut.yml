@@ -1,0 +1,1564 @@
+###
+# .. warning::
+#   The interface is not final and is not considered stable. Make sure to pin
+#   the commit from which you import this file from, along with
+#   explicitly setting :attr:`CI_TRON_JOB_TEMPLATE`.
+#
+# The low-level CI-tron integration GitLab CI job which you can use as the base
+# for your CI jobs.
+#
+# .. warning::
+#   This job is more suited towards low-level bootloader/kernel/initrd
+#   testing. If you are looking for a more transparent way to run your GitLab
+#   jobs on bare-metal, please have a look at ``.ci-tron-b2c-job-v1`` instead.
+#
+# **Including the job template**
+#
+# If your project is hosted on gitlab.freedesktop.org, use this:
+#
+# .. code-block:: yaml
+#
+#   # WARNING: it is strongly advised to use a commit hash instead of ``main``
+#   variables:
+#     CI_TRON_TEMPLATE_PROJECT: &ci-tron-template-project gfx-ci/ci-tron
+#     CI_TRON_JOB_TEMPLATE_PROJECT_URL: https://gitlab.freedesktop.org/$CI_TRON_TEMPLATE_PROJECT
+#     CI_TRON_JOB_TEMPLATE_COMMIT: &ci-tron-template-commit main
+#
+#   include:
+#     - project: *ci-tron-template-project
+#       ref: *ci-tron-template-commit
+#       file: '/.gitlab-ci/dut.yml'
+#
+# Projects hosted elsewhere unfortunately have to specify the full URL in the ``include``:
+#
+# .. code-block:: yaml
+#
+#   # WARNING: it is strongly advised to use a commit hash instead of ``main``
+#   # WARNING: be extra careful to always keep the variables and the include URL in sync!
+#   variables:
+#     CI_TRON_JOB_TEMPLATE_PROJECT_URL: https://gitlab.freedesktop.org/gfx-ci/ci-tron
+#     CI_TRON_JOB_TEMPLATE_COMMIT: main
+#
+#   include:
+#     - remote: 'https://gitlab.freedesktop.org/gfx-ci/ci-tron/-/raw/main/.gitlab-ci/dut.yml'
+#
+# **Introductory example**
+#
+# .. code-block:: yaml
+#
+#   stages:
+#     - integration testing
+#
+#   variables:
+#     # WARNING: it is strongly advised to use a commit hash instead of ``main``
+#     CI_TRON_JOB_TEMPLATE_PROJECT_URL: https://gitlab.freedesktop.org/gfx-ci/ci-tron
+#     CI_TRON_JOB_TEMPLATE_COMMIT: main
+#
+#   include:
+#     - remote: 'https://gitlab.freedesktop.org/gfx-ci/ci-tron/-/raw/main/.gitlab-ci/dut.yml'
+#
+#   # Print Hello World in the console log, then power off
+#   test:
+#     stage: integration testing
+#     extends:
+#       - .ci-tron-job-v1
+#     tags:
+#        - cpu:arch:x86_64
+#        - farm:$FARM_NAME
+#     variables:
+#       CI_TRON_PATTERN__SESSION_END__REGEX: '^.*It''s now safe to turn off your computer\r?$'
+#       CI_TRON_PATTERN__JOB_SUCCESS__REGEX: 'Execution is over, pipeline status: 0\r?$'
+#       CI_TRON_KERNEL__URL: https://gitlab.freedesktop.org/gfx-ci/boot2container/-/releases/v0.9.15.1/downloads/linux-x86_64
+#       CI_TRON_INITRAMFS__B2C__URL: https://gitlab.freedesktop.org/gfx-ci/boot2container/-/releases/v0.9.15.1/downloads/initramfs.linux_amd64.cpio.xz
+#       CI_TRON_KERNEL_CMDLINE__SALAD: "SALAD.machine_id={{ dut.id }} console={{ dut.local_tty_device }},115200"
+#       CI_TRON_KERNEL_CMDLINE__B2C_NTP_PEER: "b2c.ntp_peer=ci-gateway"
+#       CI_TRON_KERNEL_CMDLINE__B2C_RUN: b2c.run="--tls-verify=false -t {{ registry.to_local_proxy('registry.freedesktop.org/gfx-ci/ci-tron/executorctl:latest') }} echo Hello world"
+#       CI_TRON_KERNEL_CMDLINE__B2C_POWEROFF: b2c.poweroff_delay=15
+#
+# **Timeouts**
+#
+# CI-tron exposes multiple sorts of timeouts:
+#
+#   * ``OVERALL``: This limits the overall time the job can take to complete.
+#   * ``INFRA_SETUP``: This limits how long the setup phase, used to download
+#     artifacts or create NBD drives, can take.
+#   * ``BOOT_CYCLE``: This limits how long one boot -> test -> shutdown cycle
+#     can take.
+#   * ``CONSOLE_ACTIVITY``: This limits the time between we receive 2 characters
+#     in the serial output.
+#   * ``FIRST_CONSOLE_ACTIVITY``: This limits the time it can take to receive
+#     the first console log.
+#   * ``INFRA_TEARDOWN``: This limits how long the tearing down phase, used for
+#     the client to download the generated artifacts, can take.
+#
+# .. attribute:: CI_TRON_TIMEOUT__OVERALL__MINUTES
+#
+#   Number of minutes the job can take to complete, across reboots.
+#   Like the other timeouts below, ``minutes`` is a floating point number; eg.
+#   ``0.5`` = 30 seconds.
+#
+# .. attribute:: CI_TRON_TIMEOUT__INFRA_SETUP__MINUTES
+#
+#   Number of minutes the setup phase, used to download artifacts or create NBD
+#   drives, can take.
+#
+# .. attribute:: CI_TRON_TIMEOUT__BOOT_CYCLE__MINUTES
+#
+#   Number of minutes one boot -> test -> shutdown cycle can take.
+#
+# .. attribute:: CI_TRON_TIMEOUT__BOOT_CYCLE__RETRIES
+#
+#   Number of times the BOOT_CYCLE timeout can trigger a reboot before causing
+#   the end of the job.
+#
+# .. attribute:: CI_TRON_TIMEOUT__CONSOLE_ACTIVITY__MINUTES
+#
+#   Number of minutes the job can go without receiving any new console
+#   activity, after receiving the first byte.
+#
+# .. attribute:: CI_TRON_TIMEOUT__CONSOLE_ACTIVITY__RETRIES
+#
+#   Number of times the CONSOLE_ACTIVITY timeout can trigger a reboot
+#   before causing the end of the job.
+#
+# .. attribute:: CI_TRON_TIMEOUT__FIRST_CONSOLE_ACTIVITY__MINUTES
+#
+#   Number of minutes the job can wait for the first byte to arrive on the
+#   console.
+#
+# .. attribute:: CI_TRON_TIMEOUT__FIRST_CONSOLE_ACTIVITY__RETRIES
+#
+#   Number of times the FIRST_CONSOLE_ACTIVITY timeout can trigger a reboot
+#   before causing the end of the job.
+#
+# .. attribute:: CI_TRON_TIMEOUT__INFRA_TEARDOWN__MINUTES
+#
+#   Number of minutes the tearing down phase, used for the client to download
+#   the generated artifacts, can take.
+#
+# *Watchdogs*
+#
+# Watchdogs are user-defined timeouts that can be used to enforce sections of
+# execution make progress within the expected period.
+#
+# In the following attributes, replace ``SHORT_NAME`` with whatever name you
+# want to give to your watchdog.
+#
+# .. attribute:: CI_TRON_WATCHDOG__SHORT_NAME__MINUTES
+#
+#   Number of minutes that can happen between the
+#   :attr:`CI_TRON__BOOT_CYCLE__WD_START_REGEX` regular expression is matched and
+#   the :attr:`CI_TRON__BOOT_CYCLE__WD_STOP_REGEX` one is matched. The timeout gets
+#   automatically reset to when :attr:`CI_TRON__BOOT_CYCLE__WD_RESET_REGEX` is
+#   matched.
+#
+# .. attribute:: CI_TRON_WATCHDOG__SHORT_NAME__RETRIES
+#
+#   Number of times this timeout can be reset through a reboot before
+#   causing the end of the job.
+#
+# **Console Patterns**
+#
+# Console patterns are regular expressions that, when matched, influence the
+# execution of the job.
+#
+# .. attribute:: CI_TRON_PATTERN__SESSION_END__REGEX
+#
+#   **This variable is required**
+#
+#   A regular expression that, when matched, indicates that the job execution is over
+#
+# .. attribute:: CI_TRON_PATTERN__JOB_SUCCESS__REGEX
+#
+#   **This variable is required**
+#
+#   A regular expression that, when matched, indicates that the job succeeded
+#
+# .. attribute:: CI_TRON_PATTERN__JOB_WARN__REGEX
+#
+#   A regular expression that, when matched, indicates that something went
+#   a little off during the execution of the job. The job can still
+#   complete, but the GitLab job will fail when matched, even if
+#   :attr:`CI_TRON_PATTERN__JOB_SUCCESS__REGEX` is matched.
+#
+# .. attribute:: CI_TRON_PATTERN__SESSION_REBOOT__REGEX
+#
+#   A regular expression that, when matched, indicates that the test
+#   machine requires a reboot. This will increase the BOOT_CYCLE timeout's
+#   retry counter, which may abort the run if the current value exceeds
+#   :attr:`CI_TRON_TIMEOUT__BOOT_CYCLE__RETRIES`.
+#
+# .. attribute:: CI_TRON_WATCHDOG__SHORT_NAME__START_REGEX
+#
+#   A regular expression that, when matched, starts the ``SHORT_NAME`` watchdog,
+#   as set by :attr:`CI_TRON_WATCHDOG__SHORT_NAME__MINUTES`.
+#
+# .. attribute:: CI_TRON_WATCHDOG__SHORT_NAME__RESET_REGEX
+#
+#   A regular expression that, when matched, resets the ``SHORT_NAME`` watchdog
+#   timeout to its original value.
+#
+# .. attribute:: CI_TRON_WATCHDOG__SHORT_NAME__STOP_REGEX
+#
+#   A regular expression that, when matched, disables the ``SHORT_NAME``
+#   watchdog until :attr:`CI_TRON_WATCHDOG__SHORT_NAME__START_REGEX` is matched
+#   again.
+#
+# **Proxy**
+#
+# An HTTP CONNECT proxy is exposed to jobs using the environment variable
+# ``https_proxy``. This allows most https clients to automatically use it, and
+# anything else can set up the connection manually using this information.
+#
+# .. attribute:: CI_TRON_PROXY__ALLOWED_ENDPOINTS
+#
+#   Collection of lists of ``host:port`` endpoints that the job is allowed to
+#   connect to.
+#
+#   .. warning::
+#
+#     Some requests can return a redirection, which is not visible to the proxy,
+#     so make sure that those endpoints are also in the list.
+#
+# **Container Image Store**
+#
+# CI-tron has the ability to download, cache, and share container images with
+# test machines.
+#
+# .. warning::
+#
+#   Due to the **global/shared** nature of the image store, you will need to
+#   provide the platform that should be used to pull the container as it may
+#   differ from the platform used to run CI-tron.
+#
+#   Additionally, since other jobs may pull containers during the execution of
+#   your job, you really should reference the image not by its label (which may
+#   be overwritten by a later pull), but by its image id:
+#   ``{{ job.imagestore.public.short_name.image_id }}``.
+#
+# The information needed for the DUT to mount the image store can be found at
+# ``{{ imagestore.mount("public").nfs }}``. It contains the following fields:
+#
+# * ``type``: The filesystem mount's type (always NFS for now);
+# * ``src``: The filesystem mount's source;
+# * ``opts``: The filesystem mount options;
+# * ``to_b2c_filesystem(name)``: A helper that converts these mount options into
+#   a `Boot2container`_-compatible cmdline argument: ``b2c.filesystem={name},...``
+#
+# The following attributes can be used to list the containers that should be
+# pulled, along with their pull options. Replace ``SHORT_NAME`` with whatever
+# name you want to give to your container. This name can then be used to get the
+# imageID of the container by using its lower-cased short name, like so
+# ``{{ job.imagestore.public.short_name.image_id }}``.
+#
+# .. attribute:: CI_TRON_IMAGESTORE__PUBLIC__IMAGES__SHORT_NAME__NAME
+#
+#   **This variable is required**
+#
+#   The container image you want to pull, fully-qualified or with
+#   ``docker://`` as a prefix.
+#
+#   .. warning:
+#
+#     Due to the **global/shared** nature of the image store, you will need to
+#     provide the platform that should be used to pull the container as it may
+#     differ from the platform used to run CI-tron.
+#
+#     Additionally, since other jobs may pull containers during the execution of
+#     your job, you really should reference the image not by its label (which may
+#     be overwritten by a later pull), but by its image id:
+#     ``{{ imagestore.public.short_name.image_id }}``.
+#
+# .. attribute:: CI_TRON_IMAGESTORE__PUBLIC__IMAGES__SHORT_NAME__PLATFORM
+#
+#   **This variable is required**
+#
+#   **Typical values**: ``linux/amd64``, ``linux/arm64/v8``, ``linux/arm/v6``, or ``linux/riscv64``
+#
+#   The platform of the container that should be pulled. Useful for
+#   multi-architecture container manifests.
+#
+# .. attribute:: CI_TRON_IMAGESTORE__PUBLIC__IMAGES__SHORT_NAME__TLS_VERIFY
+#
+#   **Accepted values**: ``true``, ``false``
+#
+#   A boolean to specify whether to require HTTPS and verify certificates
+#   when contacting the container registry during the pull. Defaults to
+#   ``true``.
+#
+# .. attribute:: CI_TRON_IMAGESTORE__PUBLIC__IMAGES__SHORT_NAME__PULL_POLICY
+#
+#   **Default value**: ``relaxed_always``
+#
+#   A string representing the pull policy to use. This may one of the following:
+#
+#     * ``always``: Always try pulling the image
+#     * ``relaxed_always``: Re-use a previous pull if it is less than 5 minutes
+#       old, otherwise try pulling the image again
+#     * ``missing``: Only pull the image if it is unknown
+#
+# **Network Block Devices**
+#
+# CI-tron allows you to create fresh Network Block Devices (NBD) for the job.
+#
+# .. attribute:: CI_TRON_NBD__SHORT_NAME__SIZE
+#
+#   **This variable is required**
+#   **Format**: \d+[kMGTP]i?B?
+#
+#   Instantiate an NBD server that exposes a network block device of the
+#   wanted size, in bytes. You may also use the convenience exponents
+#   ``k``, ``M``, ``G``, ``T``, and ``P``. Follow that by ``B`` if you
+#   want metric sizes, or ``iB`` if you want a power-of-two size. If no ``B`` is
+#   specified, we default is to use power-of-two sizes.
+#
+#   For example, the following values ``1048576``, ``1024kiB``, ``1M``, and
+#   ``1MiB`` are equal, while ``1MB`` < ``1MiB``.
+#
+# .. attribute:: CI_TRON_NBD__SHORT_NAME__MAX_CONNECTIONS
+#
+#   **default**: ``5``
+#
+#   Maximum number of NBD connections that could be initiated by the client
+#   to this NBD server.
+#
+# The information needed for the DUT to connect to the NBD server can be found
+# at ``{{ job.nbd.short_name }}``. It contains the following fields:
+#
+# * ``name``: Name of the NBD resource;
+# * ``max_connections``: The content of :attr:`CI_TRON_NBD__SHORT_NAME__MAX_CONNECTIONS`;
+# * ``hostname``: Hostname of the NBD server exporting this resource;
+# * ``tcp_port``: TCP port of the NBD server exporting this resource;
+# * ``to_b2c_nbd(name)``: A helper that converts these parameters into
+#   a `Boot2container`_-compatible cmdline argument: ``b2c.nbd={name},...``
+#
+# **Collection Of Lists**
+#
+# CI-tron jobs have this unusual concept of a list split as a collection of
+# lists. This feature is used throughout the job configuration to partially
+# inherit or override sets of items from the default configuration.
+#
+# The concept is simple: lists are splits in multiple categories, and a category
+# is inherited from the defaults only if it is not mentioned at all.
+# Additionally, there is an extra category called ``uncategorised`` which is
+# the default category if the user choses not to name their list.
+#
+# When the final list is built, the categories are sorted by name then their
+# content is copied in order. Finally, the content of ``uncategorised`` is
+# added.
+#
+# .. warning::
+#
+#   Some users of collections of lists may decide to prioritize
+#   ``uncategorised`` elements. In the case of the HTTP and TFTP server, this is
+#   done to reduce the surprise factor and make it easier to override defaults
+#   paths without having to know about the category they may be inherited from.
+#
+# .. attribute:: LIST_NAME__SHORT_NAME__KEY
+#
+#   Add the element ``KEY`` to the ``uncategorised`` part of the ``LIST_NAME``
+#   list. The keys are then sorted within this list based on their
+#   ``SHORT_NAME`` before their values being inserted in the list.
+#
+# .. attribute:: LIST_NAME__RAW__SHORT_NAME
+#
+#   Rather than letting the template manage the elements in the
+#   ``uncategorised`` category of the ``LIST_NAME`` list, this enables users to
+#   define the list themselves as a list of YAML fragments, ordered by
+#   ``SHORT_NAME``.
+#
+#   This can be used a way to prevent inheritance of defaults by simply setting
+#   the value to ``''``.
+#
+#   .. warning::
+#     Using :attr:`LIST_NAME__RAW__SHORT_NAME` completely overrides any
+#     :attr:`LIST_NAME__SHORT_NAME__KEY` that may be set.
+#
+# .. attribute:: LIST_NAME__CATEGORY__CAT_NAME__SHORT_NAME__KEY
+#
+#   Add the element ``KEY`` to the ``CAT_NAME`` category of the ``LIST_NAME``
+#   list. The keys are then sorted within this list based on their
+#   ``SHORT_NAME`` before their values being inserted in the list.
+#
+# .. attribute:: LIST_NAME__CATEGORY__CAT_NAME__RAW__SHORT_NAME
+#
+#   Rather than letting the template manage the elements in the ``CAT_NAME``
+#   category of the ``LIST_NAME`` list, this enables users to define the list
+#   themselves as a list of YAML fragments, ordered by ``SHORT_NAME``.
+#
+#   This can be used a way to prevent inheritance of defaults by simply setting
+#   the value to ``''``.
+#
+#   .. warning::
+#     Using :attr:`LIST_NAME__CATEGORY__CAT_NAME__RAW__SHORT_NAME` completely
+#     overrides any :attr:`LIST_NAME__CATEGORY__CAT_NAME__SHORT_NAME__KEY` that
+#     may be set.
+#
+# **Default boot configuration**
+#
+# By default, CI-tron aims to provide a `Boot2Container`_ environment to its
+# users. This means that if all you care about is userspace testing, you do
+# not need to worry about bootloaders, kernels, device trees, or initramfses.
+#
+# In the event you actually care about your boot process, you may configure
+# your kernel using :attr:`CI_TRON_KERNEL`, kernel command line using
+# :attr:`CI_TRON_KERNEL_CMDLINE`, DTBs using :attr:`CI_TRON_DTB`, or
+# initramfses using :attr:`CI_TRON_INITRAMFS`.
+#
+# Additionally, the following categories may be inherited from the defaults in
+# :attr:`CI_TRON_KERNEL_CMDLINE`, :attr:`CI_TRON_INITRAMFS`,
+# :attr:`CI_TRON_HTTP_ARTIFACT`, or :attr:`CI_TRON_TFTP_ARTIFACT`:
+#
+#   * **50-platform**: Anything necessary to boot the machine before reaching
+#     the bootloader stage, or firmware that is expected by the platform and is
+#     not otherwise part of the linux-firmware project, such as the signed and
+#     non-redistributable firwmare files found on Qualcomm hardware.
+#
+#   * **50-bootloader**: Anything necessary to load the environment as specified
+#     by the ``kernel``, ``initramfs``, and ``dtb`` deployment options. Place in
+#     this category all the bootloader configuration files.
+#
+#   * **50-kernel-modules**: Anything necessary to make the default kernel boot
+#     to a usable environment (ie. kernel modules, firmware, ...). Nothing from
+#     this category should be included by default by a job that overrides the
+#     default kernel.
+#
+# .. _Boot2Container: https://gitlab.freedesktop.org/gfx-ci/boot2container
+#
+# **Artifacts**
+#
+# CI-tron may serve artifacts to the test machine in various ways and various
+# times.
+#
+# Rather than duplicating this content throughout the documentation, let's
+# define it here first.
+#
+# .. attribute:: ARTIFACT__PATH
+#
+#   **This variable is only applicable to artifacts served via HTTP/TFTP**
+#
+#   A regular expression that, when it matches the GET request's path, will
+#   return the wanted artifact, as selected by
+#   :attr:`ARTIFACT__DATA`, or :attr:`ARTIFACT__URL`.
+#
+#   If parts of the path are wrapped in parentheses, whatever content is
+#   matched may be referenced by :attr:`URL`,
+#   :attr:`ARTIFACT__FORMAT__IDX__ARCHIVE__MATCH`,
+#   :attr:`ARTIFACT__FORMAT__IDX__ARCHIVE__KEEP__SHORT_NAME__PATH`, and
+#   :attr:`ARTIFACT__FORMAT__IDX__ARCHIVE__KEEP__SHORT_NAME__REWRITE`.
+#
+# .. attribute:: ARTIFACT__DATA
+#
+#   Back the content of the artifact with the specified string.
+#
+#   If the data to return is more complex than a small string, you may specify
+#   it in parts using :attr:`ARTIFACT__DATA__IDX`.
+#
+#   .. warning::
+#      This argument takes priority over :attr:`ARTIFACT__URL` if set.
+#
+# .. attribute:: ARTIFACT__DATA__IDX
+#
+#   Back the content of the artifact by aggregating all the ``DATA`` variables,
+#   sorted by ``IDX``. ``IDX`` does not have to be a number, it can be any string.
+#
+#   If the data to return simple-enough, you may specify it using
+#   it in parts using :attr:`ARTIFACT__DATA`.
+#
+#   .. warning::
+#      Do not mix :attr:`ARTIFACT__DATA__IDX` and :attr:`ARTIFACT__DATA` as the
+#      result is unspecified.
+#
+#   .. warning::
+#      This argument takes priority over :attr:`ARTIFACT__URL` if set.
+#
+# .. attribute:: ARTIFACT__URL
+#
+#   An HTTP(S) URL to the artifact you want to use, or a link to a job artifact
+#   from the current pipeline, specified using the
+#   ``glartifact://$jobname[$filepath][?default=$defaulturl]`` format, with the
+#   following `percent-encoded`_ fields:
+#
+#     * ``$jobname``: name of the job from the current CI pipeline you want to
+#       use the artifact for, with any ``/`` and ``%`` character replaced with
+#       ``%2F`` and ``%25`` respectively. The artifacts are taken from the
+#       last successful execution of the job;
+#     * ``$filepath`` (**optional**): The path to a single file inside the job's
+#       artifact archive, with any ``?`` and ``%`` character replaced with
+#       ``%3F`` and ``%25`` respectively. If omitted, the whole archive is
+#       included;
+#     * ``$defaulturl`` (**optional**): A fallback URL in case ``$jobname`` is
+#       not found in the current CI pipeline, with any ``&`` and ``%``
+#       character replaced with ``%26`` and ``%25`` respectively. If omitted,
+#       an error is returned in that case.
+#
+#   .. warning::
+#     This argument is ignored if :attr:`ARTIFACT__DATA` or
+#     :attr:`ARTIFACT__DATA__IDX` is set.
+#
+#   .. note::
+#     Parts of the URL may reference parts of the request URL, akin to an
+#     nginx url_rewrite.
+#
+#     **Example**: To answer any GET request matching ``/linux-firmware/$path``
+#     with the corresponding file in the linux-firmware GIT repository, you
+#     could set the following variables:
+#
+#       * ``CI_TRON_HTTP_ARTIFACT__FW__PATH: /linux-firmware/(.*)``
+#       * ``CI_TRON_HTTP_ARTIFACT__FW__URL: https://web.git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git/plain/\1``
+#
+#   .. admonition:: Example: glartifact://
+#
+#     Use as a kernel the file ``releases/linux-x86_64`` located in the
+#     ``linux: [amd64, x86_64]`` job's artifacts archive from the current CI
+#     pipeline. If the job is missing from the pipeline, default to the kernel
+#     located at the specified URL:
+#
+#       * ``CI_TRON_KERNEL__URL: glartifact://linux: [amd64, x86_64]/releases/linux-x86_64?default=https://gitlab.freedesktop.org/gfx-ci/boot2container/-/releases/v0.9.16/downloads/linux-x86_64``
+#
+# .. _percent-encoded: https://developer.mozilla.org/en-US/docs/Glossary/Percent-encoding
+#
+# *U-Boot formatting*
+#
+# If you would like the artifact returned by the HTTP server to be a U-Boot
+# uimage, you should at least specify
+# :attr:`ARTIFACT__FORMAT__IDX__UBOOT__TYPE`, with ``IDX`` the position in the
+# formatting pipeline.
+#
+# .. attribute:: ARTIFACT__FORMAT__IDX__UBOOT__TYPE
+#
+#   **This variable is required if wanting to serve a U-Boot image**
+#
+#   Wrap the artifact returned by :attr:`ARTIFACT__PATH`
+#   as a u-boot image of the specified type. Supported values can be found
+#   at https://github.com/u-boot/u-boot/blob/master/include/image.h, without the
+#   ``IH_TYPE_`` prefix and in lowercase.
+#
+# .. attribute:: ARTIFACT__FORMAT__IDX__UBOOT__ARCHITECTURE
+#
+#   **Supported values**: ``x86``, ``x86_64``, ``arm32``, ``arm64`` (default), ``riscv32``, ``riscv64``
+#
+#   Wrap the artifact returned by :attr:`ARTIFACT__PATH`
+#   as a u-boot image, indicating that the CPU architecture is the
+#   specified value.
+#
+# .. attribute:: ARTIFACT__FORMAT__IDX__UBOOT__COMPRESSION
+#
+#   **Supported values**: ``none``
+#
+#   Wrap the artifact returned by :attr:`ARTIFACT__PATH`
+#   as a u-boot image, indicating that the compression type is the
+#   specified value.
+#
+# .. attribute:: ARTIFACT__FORMAT__IDX__UBOOT__OS
+#
+#   **Supported values**: ``linux``
+#
+#   Wrap the artifact returned by :attr:`PATH`
+#   as a u-boot image, indicating that the Operating System is the
+#   specified value.
+#
+# *Archive formatting*
+#
+# If the artifact returned by the HTTP server is an archive, you may modify its
+# content on the fly to, either:
+#
+#  * Return one file from the archive by using
+#    :attr:`ARTIFACT__FORMAT__IDX__ARCHIVE__MATCH`
+#
+#  * Create a new archive which contains a subset of the files present in the
+#    original archive by using
+#    :attr:`ARTIFACT__FORMAT__IDX__ARCHIVE__KEEP__SHORT_NAME__PATH`.
+#    The returned files may be re-located to a different location by using
+#    :attr:`ARTIFACT__FORMAT__IDX__ARCHIVE__KEEP__SHORT_NAME__REWRITE`.
+#
+# In either case, the path of the files present in the original archive may
+# reference parts of the request URL. This is useful when trying to find the
+# corresponding file in an archive.
+#
+# .. attribute:: ARTIFACT__FORMAT__IDX__ARCHIVE__EXTENSION
+#
+#   **Supported values**: ``none``,  ``cpio``, ``iso``, ``tar``, ``zip``.
+#
+#   Name of the archive format that should be created as a result of this
+#   formatting operation. Leave the value unset, or set to ``none`` if you
+#   just want to extract a single file from the archive using
+#   :attr:`ARTIFACT__FORMAT__IDX__ARCHIVE__MATCH`.
+#
+# .. attribute:: ARTIFACT__FORMAT__IDX__ARCHIVE__COMPRESSION
+#
+#   **Supported values**: ``none``, ``gz``, ``bz2``.
+#
+#   Compression format that should be applied to the archive that should be
+#   created as a result of this formatting operation.
+#   Leave the value unset, or set it to ``none`` if you do not want to compress
+#   the archive.
+#
+# .. attribute:: ARTIFACT__FORMAT__IDX__ARCHIVE__MATCH
+#
+#   Rather than creating a new archive, return the first file that matches
+#   the regular expression specified. Files are evaluated in the same order as
+#   the archive defines them.
+#
+#   .. note::
+#     Parts of the specified path may reference parts of the request URL, akin
+#     to an nginx url_rewrite.
+#
+#     **Example**: Answer any TFTP read request matching /dtb/$path or /dtbs/$path
+#     with the file located at boot/dtbs/$path in the archive found at the
+#     specified URL, then wrap it in a U-Boot image:
+#
+#       * ``CI_TRON_TFTP_ARTIFACT__DTB__PATH: /dtbs?/(.*)``
+#       * ``CI_TRON_TFTP_ARTIFACT__DTB__URL: https://gitlab.freedesktop.org/gfx-ci/boot2container/-/releases/v0.9.15.1/downloads/linux-arm64.dtbs.cpio.xz``
+#       * ``CI_TRON_TFTP_ARTIFACT__DTB__FORMAT__0__ARCHIVE__MATCH: boot/dtbs/\1``
+#       * ``CI_TRON_TFTP_ARTIFACT__DTB__FORMAT__1__UBOOT__TYPE: flatdt``
+#
+# .. attribute:: ARTIFACT__FORMAT__IDX__ARCHIVE__KEEP__IDX__PATH
+#
+#   Allow filtering the content of the source archive to only contain the
+#   file paths that match the specified regular expression.
+#
+#   This value may be paired with
+#   :attr:`ARTIFACT__FORMAT__IDX__ARCHIVE__KEEP__IDX__REWRITE`
+#   in order to change the path of the files kept.
+#
+#   .. note::
+#     Parts of the specified path may reference parts of the request URL, akin
+#     to an nginx url_rewrite, similarly to
+#     :attr:`ARTIFACT__FORMAT__IDX__ARCHIVE__MATCH`.
+#
+# .. attribute:: ARTIFACT__FORMAT__IDX__ARCHIVE__KEEP__IDX__REWRITE
+#
+#   Change the location of the files matched by
+#   :attr:`ARTIFACT__FORMAT__IDX__ARCHIVE__KEEP__IDX__PATH`
+#   using this substitution regular expression.
+#
+#   .. note::
+#     Parts of the specified path may reference parts of the request URL, akin
+#     to an nginx url_rewrite.
+#
+#     **Example**: Create a CPIO archive that contains all the
+#     Raspberry-Pi-firmware-provided modules for the arm64 kernel, but moved to
+#     ``usr/lib/modules/$KERNELVERSION-v8+/`` rather than the original
+#     ``firmware-$VERSION/modules/$KERNELVERSION-v8+/`` and use it as an
+#     initramfs.
+#
+#       * CI_TRON_INITRAMFS__RPIFW__URL: https://github.com/raspberrypi/firmware/archive/b154632e320b87ea95c6ce8b59f96dbbe523ecf1.zip
+#       * CI_TRON_INITRAMFS__RPIFW__FORMAT__ARCHIVE__EXTENSION: cpio
+#       * CI_TRON_INITRAMFS__RPIFW__FORMAT__ARCHIVE__KEEP__0__PATH: firmware-.*/(modules/.*-v8\+/.*)
+#       * CI_TRON_INITRAMFS__RPIFW__FORMAT__ARCHIVE__KEEP__0__REWRITE: usr/lib/\1
+#
+# **HTTP Server**
+#
+# CI-tron allows you to instantiate an HTTP server which can expose read-only
+# artifacts at any path wanted.
+#
+# The URL to this web server can be referenced by using ``{{ job.http.url }}``.
+#
+# You may also get the full URL to the test environment artifacts by using
+# ``{{ job.http.path_to("$target") }}`` with $target being any of:
+#
+#   * ``kernel``
+#   * ``initramfs``, ``initramfs.IDX``
+#   * ``dtb``, ``dtb.IDX``
+#
+# .. attribute:: CI_TRON_HTTP_ARTIFACT
+#
+#   A **collection of lists** of **artifacts**. The uncategorised part of the
+#   list is evaluated first in lexicographic order of the keys, followed by
+#   every category (in lexicographic order), themselves sorted in lexicographic
+#   order.
+#
+#   .. admonition:: Example
+#
+#     To answer any GET request matching ``/linux-firmware/$path``
+#     with the corresponding file in the linux-firmware GIT repository, you
+#     could set the following variables:
+#
+#       * ``CI_TRON_HTTP_ARTIFACT__FW__PATH: /linux-firmware/(.*)``
+#       * ``CI_TRON_HTTP_ARTIFACT__FW__URL: https://web.git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git/plain/\1``
+#
+# **TFTP Server**
+#
+# CI-tron allows you to instantiate a TFTP server which can expose read-only
+# artifacts at any path wanted.
+#
+# You may also get the full URL to the test environment artifacts by using
+# ``{{ job.tftp.path_to("$target") }}`` with $target being any of:
+#
+#   * ``kernel``
+#   * ``initramfs``, ``initramfs.IDX``
+#   * ``dtb``, ``dtb.IDX``
+#
+# .. attribute:: CI_TRON_TFTP_ARTIFACT
+#
+#   A **collection of lists** of **artifacts**. The uncategorised part of the
+#   list is evaluated first in lexicographic order of the keys, followed by
+#   every category (in lexicographic order), themselves sorted in lexicographic
+#   order.
+#
+#   .. admonition:: Example
+#
+#     Answer any TFTP read request matching /dtb/$path or /dtbs/$path
+#     with the file located at boot/dtbs/$path in the archive found at the
+#     specified URL, then wrap it in a U-Boot image:
+#
+#       * ``CI_TRON_TFTP_ARTIFACT__DTB__PATH: /dtbs?/(.*)``
+#       * ``CI_TRON_TFTP_ARTIFACT__DTB__URL: https://gitlab.freedesktop.org/gfx-ci/boot2container/-/releases/v0.9.15.1/downloads/linux-arm64.dtbs.cpio.xz``
+#       * ``CI_TRON_TFTP_ARTIFACT__DTB__FORMAT__0__ARCHIVE__MATCH: boot/dtbs/\1``
+#       * ``CI_TRON_TFTP_ARTIFACT__DTB__FORMAT__1__UBOOT__TYPE: flatdt``
+#
+# **Boot configuration**
+#
+# As we saw in the **Default boot configuration** section, CI-tron provides a
+# default kernel that is suitable for a `Boot2container`_ environment. You may
+# however decide to override it using :attr:`CI_TRON_KERNEL`,
+# :attr:`CI_TRON_INITRAMFS`, and :attr:`CI_TRON_DTB`. For Fastboot-devices, you
+# may instead supply the complete boot image using
+# :attr:`CI_TRON_FASTBOOT__BOOT_IMAGE`.
+#
+# .. _Boot2container: https://gitlab.freedesktop.org/gfx-ci/boot2container
+#
+# You may also want to control the kernel command line. To do so, you will need
+# to use :attr:`CI_TRON_KERNEL_CMDLINE`
+#
+# .. attribute:: CI_TRON_KERNEL
+#
+#   An artifact to override CI-tron's default kernel with.
+#
+#   .. admonition:: Example
+#
+#     CI_TRON_KERNEL__URL: https://gitlab.freedesktop.org/gfx-ci/boot2container/-/releases/v0.9.15.1/downloads/linux-arm64
+#
+# .. attribute:: CI_TRON_KERNEL_CMDLINE
+#
+#   A **collection of lists** of strings that allow configuring the kernel command
+#   line in parts. The final command line will be the concatenation of all the
+#   fragments, ordered by their short name.
+#
+#   .. admonition:: Example
+#
+#     Given the following variables set:
+#
+#       * CI_TRON_KERNEL_CMDLINE__02_SECOND: world
+#       * CI_TRON_KERNEL_CMDLINE__01_FIRST: hello
+#
+#     The generated command line will be ``hello world``.
+#
+# .. attribute:: CI_TRON_INITRAMFS
+#
+#   A **collection of lists** of **artifacts** which will be provided as
+#   initramfses to the test machine.
+#
+#   These initramfses may be downloaded via HTTP or TFTP using:
+#
+#     * ``{{ job.tftp.path_to("$target") }}``
+#     * ``{{ job.http.path_to("$target") }}``
+#
+#   With target being:
+#
+#     * ``initramfs``: a concatenation of all the initramfses specified in the
+#       list;
+#     * ``initramfs.N``: The N-th initramfs specified. Useful when the
+#       bootloader supports more than one initramfs and downloads them through
+#       TFTP which can have a size limit as low as 32MB.
+#
+# .. attribute:: CI_TRON_DTB
+#
+#   A **collection of lists** of **artifacts** which may be used as device
+#   tree binaries for the bootloader / kernel to use. If more than one DTB is
+#   provided, the behavior will differ depending on the boot chain.
+#
+#   These DTBs may be downloaded via HTTP or TFTP using:
+#
+#     * ``{{ job.tftp.path_to("$target") }}``
+#     * ``{{ job.http.path_to("$target") }}``
+#
+#   With target being:
+#
+#     * ``dtb``: a concatenation of all the DTB specified in the list;
+#     * ``dtb.N``: The N-th DTB specified.
+#
+#   .. warning::
+#
+#     Some boot methods only allow specifying one DTB. In this case, only the
+#     first DTB will be used.
+#
+# **Fastboot**
+#
+# For `Fastboot <https://en.wikipedia.org/wiki/Fastboot>`_-based devices, it is
+# possible to override the **Default boot configuration** of how the boot image
+# should be generated, or by providing a complete boot image using
+# :attr:CI_TRON_FASTBOOT__BOOT_IMAGE.
+#
+# Most of the following parameters are named directly after Google's
+# mkbootimg.py command line parameters which, unfortunately, do not really
+# come with documentation.
+#
+# .. attribute:: CI_TRON_FASTBOOT__HEADER_VERSION
+#
+#   **Default value**: ``0``
+#
+# .. attribute:: CI_TRON_FASTBOOT__BASE
+#
+#   **Default value**: ``0x10000000``
+#
+# .. attribute:: CI_TRON_FASTBOOT__KERNEL_OFFSET
+#
+#   **Default value**: ``0x00008000``
+#
+# .. attribute:: CI_TRON_FASTBOOT__RAMDISK_OFFSET
+#
+#   **Default value**: ``0x01000000``
+#
+# .. attribute:: CI_TRON_FASTBOOT__DTB_OFFSET
+#
+#   **Default value**: ``0x01f00000``
+#
+# .. attribute:: CI_TRON_FASTBOOT__TAGS_OFFSET
+#
+#   **Default value**: ``0x00000100``
+#
+# .. attribute:: CI_TRON_FASTBOOT__BOARD
+#
+#   **Default value**: ``""``
+#
+# .. attribute:: CI_TRON_FASTBOOT__PAGESIZE
+#
+#   **Default value**: ``2048``
+#
+# .. attribute:: CI_TRON_FASTBOOT__OS_VERSION
+#
+#   **Default value**: ``0``
+#
+# .. attribute:: CI_TRON_FASTBOOT__OS_PATCH_LEVEL
+#
+#   **Default value**: ``0``
+#
+# .. attribute:: CI_TRON_FASTBOOT__BOOT_IMAGE
+#
+#   The complete boot image that you would like to boot on your fastboot
+#   device.
+#
+#   .. warning::
+#
+#     This parameter renders all the other Fastboot parameters useless, since
+#     it completely bypasses image generation.
+#
+# .. User variables:
+#
+# **User variables**
+#
+# If you wish to define variables that are related to job configuration but
+# don't want to accidentally influence the template generation, you may prefix
+# them with ``CI_TRON__``.
+#
+# Just like any other variable, they may be referenced using
+# ``{{ environ.CI_TRON__VARIABLE_NAME }}``.
+#
+# .. tip:
+#
+#   Namespacing your template-related variables with ``CI_TRON__`` makes it
+#   easier to separate them out from variables you want the test machine to use
+#
+# **Executorctl parameters**
+#
+# CI-tron does not yet have true native support for GitLab. This job is an
+# attempt to hide the fact that we need to call ``executorctl`` to queue the
+# job. Here are variables that can be used to tune this behaviour.
+#
+# .. attribute:: CI_TRON_JOB_TEMPLATE
+#
+#   **default**: ``${CI_TRON_JOB_TEMPLATE_PROJECT_URL}/-/raw/${CI_TRON_JOB_TEMPLATE_COMMIT}/.gitlab-ci/ci-tron-job-dut-v1.yml.j2``
+#
+#   Path or URL to the job template that will be used to convert GitLab
+#   environment variables to the expected YAML job description CI-tron
+#   expects.
+#
+#   .. warning:
+#
+#     Please ensure that the selected job template is compatible with the
+#     version of this file. The best is just to include ``dut.yml`` like that:
+#
+#     .. code-block:: yaml
+#
+#       include:
+#         - '${CI_TRON_JOB_TEMPLATE_PROJECT_URL}/raw/${CI_TRON_JOB_TEMPLATE_COMMIT}/.gitlab-ci/dut.yml'
+#
+# .. attribute:: CI_TRON_EXECUTORCTL_IMAGE
+#
+#   **default**: registry.freedesktop.org/gfx-ci/ci-tron/executorctl:...
+#
+#   Container image to use when queuing the job in CI-tron.
+#
+# .. attribute:: CI_TRON_JOB_TEMPLATE_PROJECT_URL
+#
+#   **This variable is required if CI_TRON_JOB_TEMPLATE is unset**
+#
+#   URL (eg. https://gitlab.freedesktop.org/gfx-ci/ci-tron) of the project
+#   that is hosting the job template. Mandatory if you did not override
+#   :attr:`CI_TRON_JOB_TEMPLATE`, ignored if you did.
+#
+# .. attribute:: CI_TRON_JOB_TEMPLATE_COMMIT
+#
+#   **This variable is required if CI_TRON_JOB_TEMPLATE is unset**
+#
+#   Commit-like of the job template that should be used. Mandatory if you did
+#   not override :attr:`CI_TRON_JOB_TEMPLATE`, ignored if you did.
+#
+#
+# .. attribute:: CI_TRON_JOB_SCRIPT_PATH
+#
+#   Path where the job script is saved; set this to a path in your job
+#   artifacts if you want to keep the job script.
+#
+# .. attribute:: CI_TRON_JOB_SCRIPT_IGNORE_VARS_MATCHING
+#
+#   Regex of names of variables that contain values that should not be written
+#   down in the job script.
+#
+#
+# .. attribute:: CI_TRON_EXECUTORCTL_EXTRA_ARGS__SHORT_NAME
+#
+#   Extra parameters that will be passed to executorctl, in the same way a
+#   **collection of lists** would.
+#
+.ci-tron-job-v1-internal:
+  image: "$CI_TRON_EXECUTORCTL_IMAGE"
+  variables:
+    CI_TRON_EXECUTORCTL_IMAGE: registry.freedesktop.org/gfx-ci/ci-tron/executorctl:2025-10-12.1
+
+    # This variable means that `after_script`_, `before_script`_, `script`_,
+    # `image`_, and `timeout`_ are unsupported and set to chosen values to best
+    # support starting a CI-tron job in Gitlab.
+    #
+    # Future versions of CI-tron which re-implement the gitlab-runner and thus
+    # drop the need for such trampoline will be expected to ignore these
+    # variables and instead source them from the raw GitLab job.
+    CI_TRON_DUT_JOB_SUBMISSION_STYLE: "trampoline"
+
+    # Executorctl-related variables
+    CI_TRON_JOB_TEMPLATE: ${CI_TRON_JOB_TEMPLATE_PROJECT_URL}/-/raw/${CI_TRON_JOB_TEMPLATE_COMMIT}/.gitlab-ci/ci-tron-job-dut-v1.yml.j2
+
+    # Path to the job script; set this to a path in your artifacts to save it
+    # for later.
+    CI_TRON_JOB_SCRIPT_PATH: /job_script.sh
+
+    # Make the default timeout the same as the default timeout of GitLab, minus
+    # 1 minute to give a chance for the job to finish and upload results
+    CI_TRON_TIMEOUT__OVERALL__MINUTES: 59
+
+.ci-tron-job-v1:
+  extends:
+    - .ci-tron-job-v1-internal
+  variables:
+    CI_TRON__B2C_WORK_DIRECTORY: $CI_PROJECT_DIR
+  script: |
+      set -eu
+
+      # Make sure that all the necessary variables are set
+      for var in CI_TRON_PATTERN__SESSION_END__REGEX CI_TRON_PATTERN__JOB_SUCCESS__REGEX; do
+        if [[ -z "$(eval echo \$$var)" ]]; then
+          echo "The required variable '$var' is missing"
+          exit 1
+        fi
+      done
+
+      echo -e "\n\e[0Ksection_start:`date +%s`:ci_tron_executorctl_preparation[collapsed=true]\r\e[0K\e[0;36mGenerating and printing the job script\e[0m\n"
+
+      # Aggregate all the extra arguments for executorctl
+      export CI_TRON_EXECUTORCTL_EXTRA_ARGS=""
+      for var_name in $(env | grep -e "^CI_TRON_EXECUTORCTL_EXTRA_ARGS__" | cut -d '=' -f 1 | sort); do
+          CI_TRON_EXECUTORCTL_EXTRA_ARGS="$CI_TRON_EXECUTORCTL_EXTRA_ARGS $(eval echo \$$var_name)"
+      done
+
+      # Allow users to request to be added to some S3 groups
+      if [ -n "${CI_TRON_S3_CREDENTIALS:-}" ]; then
+        CI_TRON_EXECUTORCTL_EXTRA_ARGS="$CI_TRON_EXECUTORCTL_EXTRA_ARGS --minio-auth $CI_TRON_S3_CREDENTIALS"
+
+        if [ -n "${CI_TRON_S3_GROUPS_ADD:-}" ]; then
+          for group in ${CI_TRON_S3_GROUPS_ADD//,/ }; do
+            CI_TRON_EXECUTORCTL_EXTRA_ARGS="$CI_TRON_EXECUTORCTL_EXTRA_ARGS --minio-group $group"
+          done
+        fi
+      fi
+
+      mkdir -p "$(dirname "$CI_TRON_JOB_SCRIPT_PATH")"
+
+      python -c '
+      from functools import cached_property
+      from urllib.parse import unquote
+      import os
+      import shlex
+      import re
+      import requests
+      import sys
+
+      from requests.adapters import HTTPAdapter, Retry
+
+      from valve_gfx_ci.executor.client.message import JobStatus
+
+      # A wrapper for the GitLab REST API to convert glartifact links to artifact URLs
+      class GitLab:
+        @property
+        def project_url(self):
+          return f"{os.environ["CI_API_V4_URL"]}/projects/{os.environ["CI_PROJECT_ID"]}"
+
+        @cached_property
+        def pipeline_jobs(self) -> dict[str, dict]:
+          jobs = {}
+
+          url = f"{self.project_url}/pipelines/{os.environ["CI_PIPELINE_ID"]}/jobs?scope=success&include_retried=true"
+          session = requests.Session()
+          retries = Retry(total=3, backoff_factor=1, status_forcelist=[502, 503, 504])
+          session.mount("https://", HTTPAdapter(max_retries=retries))
+          r = session.get(url)
+          r.raise_for_status()
+          for job in r.json():
+            if job["name"] not in jobs:
+              jobs[job["name"]] = job
+
+          return jobs
+
+        def rewrite_gitlab_artifact_url(self, url: str):
+            if m := re.match(r"glartifact://(?P<job_name>[^/]+)(?P<artifact_path>[^\?]*)(\?default=(?P<default_url>.*))?", url):
+                fields = m.groupdict(default="")
+                job_name = unquote(fields["job_name"])
+                artifact_path = unquote(fields["artifact_path"])
+                default_url = unquote(fields["default_url"])
+                if job := self.pipeline_jobs.get(job_name):
+                  return f"{self.project_url}/jobs/{job["id"]}/artifacts{artifact_path}"
+                elif default_url:
+                  print(f"WARNING: The job \"{job_name}\" does not exist in this pipeline, using the default url", file=sys.stderr)
+                  return default_url
+                else:
+                  raise ValueError(f"The job \"{job_name}\" does not exist in this pipeline, and no defaults is set.")
+
+            return url
+
+      gitlab = GitLab()
+
+      # These vars can cause interferences, so avoid storing these; they will be
+      # re-defined by the shell or passed through when running the script anyway.
+      shell_vars = {
+        "_",
+        "HOME",
+        "HOSTNAME",
+        "OLDPWD",
+        "PATH",
+        "PWD",
+        "TERM",
+        "XDG_RUNTIME_DIR",
+      }
+
+      # These GitLab variables contain tokens that must not be leaked.
+      token_vars = {
+        "CI_DEPENDENCY_PROXY_PASSWORD",
+        "CI_DEPLOY_PASSWORD",
+        "CI_JOB_TOKEN",
+        "CI_REGISTRY_PASSWORD",
+        "CI_REPOSITORY_URL",
+      }
+
+      # This pattern is supplied by the job/pipeline/project
+      ignored_regex = re.compile(os.environ.get("CI_TRON_JOB_SCRIPT_IGNORE_VARS_MATCHING", ""))
+
+      print("#!/bin/sh")
+      print("set -eu")
+
+      # List all the variables, properly escaped
+      for key, value in sorted(os.environ.items()):
+
+        if key.startswith("CI_TRON_") and key.endswith("__URL"):
+          value = gitlab.rewrite_gitlab_artifact_url(value)
+
+        if key in shell_vars:
+          print(f"# {key} was not stored as it will be re-defined by the shell as appropriate.")
+        elif key in token_vars:
+          print(f"# {key} was not stored as it contains a token/password.")
+        elif any(os.environ[iv] in value for iv in token_vars if iv in os.environ):
+          print(f"# {key} was not stored as it contains a token/password.")
+        elif ignored_regex.fullmatch(key):
+          print(f"# {key} was not stored as it matches the pattern in `CI_TRON_JOB_SCRIPT_IGNORE_VARS_MATCHING`.")
+        else:
+          print(f"export {key}={shlex.quote(value)}")
+
+      # The actual command; the job template will make use of all these variables above.
+      print(r"""
+      EXECUTOR_EXITCODE=0
+      PYTHONUNBUFFERED=1 \
+      executorctl run \
+        --job-id "$CI_JOB_NAME_SLUG" \
+        --machine-id "$CI_RUNNER_DESCRIPTION" \
+        --forward-env-regex ".*" \
+        --job-cookie "$CI_TRON_JOB_COOKIE" \
+        $CI_TRON_EXECUTORCTL_EXTRA_ARGS \
+        --wait \
+        $CI_TRON_JOB_TEMPLATE \
+        || EXECUTOR_EXITCODE=$?
+      """)
+
+      print("case $EXECUTOR_EXITCODE in")
+      print(f"{JobStatus.PASS.value}) echo \"PASS: session_end and job_success patterns matched.\";;")
+      print(f"{JobStatus.FAIL.value}) echo \"FAIL: session_end pattern matched but job_success did not.\";;")
+      print(f"{JobStatus.WARN.value}) echo \"WARN: Job succeeded, but a warning was raised; in GitLab, warnings are failures.\";;")
+      print(f"{JobStatus.COMPLETE.value}) echo \"COMPLETE: Job finished but no job_success pattern was defined.\";;")
+      print(f"{JobStatus.INCOMPLETE.value}) echo \"INCOMPLETE: session_end pattern was not matched.\";;")
+      print(f"{JobStatus.SETUP_FAIL.value}) echo \"SETUP_FAIL: Job setup failed.\";;")
+      print(f"{JobStatus.UNKNOWN.value}) echo \"UNKNOWN: Job exited in unknown state.\";;")
+      print(f"143) echo \"Job was killed by GitLab (timeout or cancelled).\";;")
+      print("*) echo \"*: Job exited with code $EXECUTOR_EXITCODE, which is not supported; please update this code.\";;")
+      print("esac")
+
+      print("exit $EXECUTOR_EXITCODE")
+
+      ' > "$CI_TRON_JOB_SCRIPT_PATH"
+
+      echo '# Run this script from the gateway to reproduce this job:'
+      echo '# 8<--'
+      cat "$CI_TRON_JOB_SCRIPT_PATH"
+      echo '# -->8'
+
+      echo -e "\e[0Ksection_end:$(date +%s):ci_tron_executorctl_preparation\r\e[0K"
+
+      sh "$CI_TRON_JOB_SCRIPT_PATH"
+
+
+###
+# The `Boot2container`_-based job which enables a more seamless integration
+# with GitLab CI.
+#
+# This job is inheriting from ``.ci-tron-job-v1``, and thus all the attributes
+# it specifies are available. Please however avoid setting any variable called
+# ``CI_TRON__B2C_`` outside of the ones documented under.
+#
+# .. _Boot2container: https://gitlab.freedesktop.org/gfx-ci/boot2container
+#
+# **Support matrix**
+#
+# =================  =======  =====
+# Gitlab Feature     Support  Notes
+# =================  =======  =====
+# `after_script`_       ⚠     Unsupported and will break in the future
+# `artifacts`_          ✅
+# `before_script`_      ⚠     Unsupported and will break in the future
+# `cache`_              ✅
+# `dependencies`_       ✅     Not as efficient as using an HTTP artifact, can be improved
+# `interruptible`_      ✅
+# `image`_              ❌     Use the :attr:`CI_TRON__B2C_IMAGE_UNDER_TEST` variable instead
+# `needs`_              ✅     Not as efficient as using an HTTP artifact, can be improved
+# `pages`_              ❌     Unsupported. Use a general-purpose runner for this.
+# `release`_            ❌     Unsupported. Use a general-purpose runner for this.
+# `resource_group`_     ✅
+# `retry`_              ✅
+# `run`_                ❌     Unsupported, but may be supported in the future
+# `services`_           ⚠     Unsupported. May be emulated using ``CI_TRON_HTTP_ARTIFACT__B2C_CFG__DATA__03_MY_SERVICE=b2c.run_service=...``
+# `script`_             ❌     Use the :attr:`CI_TRON__B2C_EXEC_CMD` variable instead
+# `timeout`_            ⚠     Use the :attr:`CI_TRON_TIMEOUT__OVERALL__MINUTES` variable to set the timeout, then ensure ``timeout`` is set to a value greater than it by at least 5 minutes.
+# `variables`_          ✅
+# =================  =======  =====
+#
+# .. _after_script: https://docs.gitlab.com/ci/yaml/#after_script
+# .. _artifacts: https://docs.gitlab.com/ci/yaml/#artifacts
+# .. _before_script: https://docs.gitlab.com/ci/yaml/#before_script
+# .. _cache: https://docs.gitlab.com/ci/yaml/#cache
+# .. _dependencies: https://docs.gitlab.com/ci/yaml/#dependencies
+# .. _interruptible: https://docs.gitlab.com/ci/yaml/#interruptible
+# .. _image: https://docs.gitlab.com/ci/yaml/#image
+# .. _needs: https://docs.gitlab.com/ci/yaml/#needs
+# .. _pages: https://docs.gitlab.com/ci/yaml/#pages
+# .. _release: https://docs.gitlab.com/ci/yaml/#release
+# .. _resource_group: https://docs.gitlab.com/ci/yaml/#resource_group
+# .. _retry: https://docs.gitlab.com/ci/yaml/#retry
+# .. _run: https://docs.gitlab.com/ci/yaml/#run
+# .. _services: https://docs.gitlab.com/ci/yaml/#services
+# .. _script: https://docs.gitlab.com/ci/yaml/#script
+# .. _timeout: https://docs.gitlab.com/ci/yaml/#timeout
+# .. _variables: https://docs.gitlab.com/ci/yaml/#variables
+#
+# **Introductory example**
+#
+# Here is a simplistic example of how to integrate a CI-tron-provided DUT in
+# your in GitLab CI pipelines:
+#
+# ``.gitlab-ci.yml``:
+#
+# .. code-block:: yaml
+#
+#     stages:
+#       - integration testing
+#
+#     variables:
+#       # WARNING: it is strongly advised to use a commit hash instead of ``main``
+#       # WARNING: be extra careful to always keep the variables and the include URL in sync!
+#       CI_TRON_JOB_TEMPLATE_PROJECT_URL: https://gitlab.freedesktop.org/gfx-ci/ci-tron
+#       CI_TRON_JOB_TEMPLATE_COMMIT: main
+#
+#     include:
+#       - remote: 'https://gitlab.freedesktop.org/gfx-ci/ci-tron/-/raw/main/.gitlab-ci/dut.yml'
+#
+#     pre-test:
+#       stage: integration testing
+#       variables:
+#         GIT_STRATEGY: none
+#       image: registry.freedesktop.org/gfx-ci/ci-tron/executorctl:latest
+#       script:
+#         - mkdir -p result
+#         - echo file1 > result/file1
+#         - echo file2 > result/file2
+#       artifacts:
+#         paths:
+#           - result
+#
+#     # Concatenate the content of file1 and file2 then save it in file3.
+#     # Check out the generated artifacts to see file3.
+#     .test:
+#       stage: integration testing
+#       needs:
+#         - job: pre-test
+#           artifacts: true
+#       extends:
+#         - .ci-tron-b2c-job-v1
+#       variables:
+#         GIT_STRATEGY: none
+#         CI_TRON__B2C_IMAGE_UNDER_TEST: 'registry.freedesktop.org/gfx-ci/ci-tron/machine-registration:latest'
+#         CI_TRON__B2C_EXEC_CMD: 'cat result/file1 result/file2 | tee result/file3'
+#       artifacts:
+#         paths:
+#           - result
+#
+#     # Run .test on an amd64 DUT
+#     test-amd64:
+#       extends:
+#         - .test
+#       tags:
+#         - cpu:arch:x86_64
+#         - farm:$FARM_NAME
+#
+#     # Run .test on an arm64 DUT
+#     test-arm64:
+#       extends:
+#         - .test
+#       tags:
+#         - cpu:arch:aarch64
+#         - farm:$FARM_NAME
+#
+# **Container images**
+#
+# .. note::
+#
+#   Test machines should access containers through proxy registries that
+#   de-duplicate image downloads and thus decrease boot time and increase boot
+#   reliability.
+#
+#   You may use the ``registry.to_local_proxy()`` function to convert an image
+#   name to one pointing towards its designated proxy, according to the rules
+#   configured in :ref:`registry_config`.
+#
+#   Example: ``{{ registry.to_local_proxy('${CI_TRON__B2C_CUSTOM_IMAGE}') }}``
+#
+# .. attribute:: CI_TRON__B2C_IMAGE_UNDER_TEST
+#
+#   **This variable is required**
+#
+#   The image you want to run, fully-qualified or with ``docker://`` as a
+#   prefix.
+#
+# .. attribute:: CI_TRON__B2C_EXEC_CMD
+#
+#   **This variable is required**
+#
+#   The command or list of commands that should be executed, using the
+#   shell specified by :attr:`CI_TRON__B2C_EXEC_SHELL`.
+#
+#   This variable may contain multiple lines, but should not contain double
+#   ``"``, nor unescaped single quotes.
+#
+# .. attribute:: CI_TRON__B2C_EXEC_SHELL
+#
+#   **default**: ``sh``
+#
+#   The shell that should be used to execute the :attr:`CI_TRON__B2C_EXEC_CMD`
+#   commands.
+#
+# .. attribute:: CI_TRON__B2C_EXEC_SHELL_FLAGS
+#
+#   **default**: ``-euc``
+#
+#   Shell flags that should be set before executing the
+#   :attr:`CI_TRON__B2C_EXEC_CMD` in the :attr:`CI_TRON__B2C_EXEC_SHELL`.
+#
+# .. attribute:: CI_TRON__B2C_MACHINE_REGISTRATION_IMAGE
+#
+#   **default**: ``registry.freedesktop.org/gfx-ci/ci-tron/machine-registration:latest``
+#
+#   The container image to use to check that the test machine running the job
+#   really is the one we expected it to be.
+#
+# .. attribute:: CI_TRON__B2C_MACHINE_REGISTRATION_CMD
+#
+#   **default**: ``check``
+#
+#   Machine registration command to execute. Could be set to
+#   ``setup --tags TAG1,TAG2,...`` instead to only check for the presence of the
+#   wanted tags and hiding un-wanted hardware.
+#
+#   .. seealso::
+#
+#     Check out the :ref:`Machine registration` for more information about the
+#     acceptable commands.
+#
+# .. attribute:: CI_TRON__B2C_TELEGRAF_IMAGE
+#
+#   **default**: ``registry.freedesktop.org/gfx-ci/ci-tron/telegraf:latest``
+#
+#   The container image to use for monitoring of the test machine.
+#
+# .. attribute:: CI_TRON__B2C_CACHE_DEVICE
+#
+#   **default**: ``auto``
+#
+#   The block device to use as a cache device. The supported values are
+#   specified under **b2c.cache_device** in `B2C's README`_.
+#
+#   .. seealso::
+#     Please consider using ``.ci-tron-b2c-diskless-v1`` if you would like
+#     testing to be done in a diskless fashion.
+#
+# .. _B2C's README: <https://gitlab.freedesktop.org/gfx-ci/boot2container/-/blob/main/README.md>
+#
+# .. attribute:: CI_TRON__B2C_POWEROFF_DELAY
+#
+#   **default**: ``15``
+#
+#   Number of seconds the test machine should remain on after the end of the
+#   tests, waiting for CI-tron to shut down the power.
+#
+# .. attribute:: CI_TRON__B2C_SHARE_FOLDER_PATH
+#
+#   **default**: ``./``
+#
+#   Folder you would like to forward to the DUT, relative to the start working
+#   dir of the container image, i.e. ``$CI_PROJECT_DIR`` on GitLab instance.
+#
+# .. attribute:: CI_TRON__B2C_SWAP_SIZE
+#
+#   **default**: ``8G``
+#
+#   Size of the swap partition/file that should be used for the job.
+#
+# .. attribute:: CI_TRON__B2C_SWAP_SWAPPINESS
+#
+#   **default**: ``60``
+#
+#   Swappiness setting to use for the swap set by :attr:`CI_TRON__B2C_SWAP_SIZE`
+#
+.ci-tron-b2c-job-v1:
+  extends:
+    - .ci-tron-job-v1-internal
+  variables:
+    # ----- User parameters -----
+
+    CI_TRON_PATTERN__SESSION_END__REGEX: '^.*It''s now safe to turn off your computer\r?$'
+    CI_TRON_PATTERN__JOB_SUCCESS__REGEX: 'Execution is over, pipeline status: 0\r?$'
+
+    CI_TRON__B2C_MACHINE_REGISTRATION_IMAGE: 'registry.freedesktop.org/gfx-ci/ci-tron/machine-registration:latest'
+    CI_TRON__B2C_TELEGRAF_IMAGE: 'registry.freedesktop.org/gfx-ci/ci-tron/telegraf:latest'
+
+    CI_TRON__B2C_CACHE_DEVICE: auto
+    CI_TRON__B2C_POWEROFF_DELAY: 15
+    CI_TRON__B2C_SWAP_SIZE: "8G"
+    CI_TRON__B2C_SWAP_SWAPPINESS: "60"
+    CI_TRON__B2C_EXEC_SHELL: "sh"
+    CI_TRON__B2C_EXEC_SHELL_FLAGS: "-euc"
+    CI_TRON__B2C_SHARE_FOLDER_PATH: "./"
+    CI_TRON__B2C_MACHINE_REGISTRATION_CMD: "check"
+
+    # ----- Internal -----
+
+    # An intermediate variable that contains the template needed to make the
+    # telegraf image accessible to the DUT
+    #
+    CI_TRON__B2C_IMAGE__TELEGRAF: "{{ registry.to_local_proxy('$CI_TRON__B2C_TELEGRAF_IMAGE') }}"
+
+    # An intermediate variable that contains the template needed to make the
+    # machine registration image accessible to the DUT
+    #
+    CI_TRON__B2C_IMAGE__MACHINE_REGISTRATION: "{{ registry.to_local_proxy('$CI_TRON__B2C_MACHINE_REGISTRATION_IMAGE') }}"
+
+    # An intermediate variable that contains the template needed to make the
+    # image under test accessible to the DUT
+    #
+    CI_TRON__B2C_IMAGE__IMAGE_UNDER_TEST: "{{ registry.to_local_proxy('$CI_TRON__B2C_IMAGE_UNDER_TEST') }}"
+
+    # All the configuration that has to be in the kernel command line
+    CI_TRON_KERNEL_CMDLINE__B2C_NTP_PEER: "b2c.ntp_peer=ci-gateway"
+    CI_TRON_KERNEL_CMDLINE__B2C_CACHE_DEVICE: "b2c.cache_device=$CI_TRON__B2C_CACHE_DEVICE"
+    CI_TRON_KERNEL_CMDLINE__B2C_SWAP: "b2c.swap=${CI_TRON__B2C_SWAP_SIZE},swappiness=${CI_TRON__B2C_SWAP_SWAPPINESS}"
+
+    CI_TRON_INITRAMFS_CATEGORY__50_ENVIRON__ENVIRON__ARCHIVE__EXTENSION: cpio
+    CI_TRON_INITRAMFS_CATEGORY__50_ENVIRON__ENVIRON__ARCHIVE__ADD__USER_ENV__PATH: /user/job.env
+    CI_TRON_INITRAMFS_CATEGORY__50_ENVIRON__ENVIRON__ARCHIVE__ADD__USER_ENV__ARTIFACT__DATA: |
+        #!jinja2
+        # NOTE: Multi-line variables are unsupported by podman, so we drop them
+        # src: https://github.com/containers/podman-compose/issues/908
+        # NOTE2: We do not forward the variables starting with CI_TRON_ as they are only meant for
+        # rendering this template, not for the job's consumption
+        {% for k, v in environ | dictsort if "\n" not in v and not k.startswith("CI_TRON_") %}
+        {{ k }}={{ v }}
+        {%- endfor %}
+
+        # The per-job http server is at a different port each time, so let's
+        # provide an easy way for jobs to know where it is this time.
+        CI_TRON_JOB_HTTP_SERVER={{ job.http.url }}
+
+    # Set up SALAD
+    CI_TRON_KERNEL_CMDLINE__SALAD: "SALAD.machine_id={{ dut.id }} console={{ dut.local_tty_device }},115200"
+
+    # Set up the B2C config script
+    CI_TRON_HTTP_ARTIFACT__B2C_CFG__PATH: "/b2c-extra-args"
+    CI_TRON_KERNEL_CMDLINE__B2C_EXTRA_ARGS_URL: "b2c.extra_args_url={{ job.http.url }}${CI_TRON_HTTP_ARTIFACT__B2C_CFG__PATH}"
+
+    CI_TRON_HTTP_ARTIFACT__B2C_CFG__DATA__00_DATA_IS_JINJA2_TEMPLATE: "#!jinja2"
+    CI_TRON_HTTP_ARTIFACT__B2C_CFG__DATA__01_PIPEFAIL: "b2c.pipefail"
+    CI_TRON_HTTP_ARTIFACT__B2C_CFG__DATA__01_POWEROFF_DELAY: "b2c.poweroff_delay=${CI_TRON__B2C_POWEROFF_DELAY}"
+    CI_TRON_HTTP_ARTIFACT__B2C_CFG__DATA__01_SHARE_FOLDER: |
+        b2c.minio="gateway,{{ job.bucket.url }},{{ job.bucket.access_key }},{{ job.bucket.secret_key }}"
+        b2c.volume="{{ job.bucket.name }}-results,mirror=gateway/{{ job.bucket.name }},pull_on=pipeline_start,push_on=changes,overwrite{% for excl in "${CI_TRON__B2C_ARTIFACT_EXCLUSION}".split(",") %},exclude={{ excl }}{% endfor %},remove,expiration=pipeline_end,preserve"
+        {% for bucket in "${CI_TRON__B2C_MOUNT_BUCKETS}".split(',') if bucket %}
+        b2c.volume="bucket-{{ bucket }},mirror=gateway/{{ bucket }},pull_on=pipeline_start,push_on=changes,overwrite,remove"
+        {% endfor %}
+    CI_TRON_HTTP_ARTIFACT__B2C_CFG__DATA__02_TELEGRAF_SERVICE: |
+        b2c.run_service="--privileged --tls-verify=false --pid=host ${CI_TRON__B2C_IMAGE__TELEGRAF}" b2c.hostname={{ dut.hostname }}
+    CI_TRON_HTTP_ARTIFACT__B2C_CFG__DATA__03_RUN_MARS: |
+        b2c.run="-ti --tls-verify=false ${CI_TRON__B2C_IMAGE__MACHINE_REGISTRATION} ${CI_TRON__B2C_MACHINE_REGISTRATION_CMD}"
+    CI_TRON_HTTP_ARTIFACT__B2C_CFG__DATA__04_RUN_IUT: |
+        b2c.proxy="https={{ job.http.url }}"
+        b2c.run="-v {{ job.bucket.name }}-results:${CI_TRON__B2C_WORK_DIRECTORY} {% for bucket in "${CI_TRON__B2C_MOUNT_BUCKETS}".split(',') if bucket %}-v bucket-{{ bucket }}:/volumes/{{ bucket }} {% endfor %} -w ${CI_TRON__B2C_WORK_DIRECTORY} --tls-verify=false --env https_proxy={{ job.http.url }} --env-file ${CI_TRON_INITRAMFS_CATEGORY__50_ENVIRON__ENVIRON__ARCHIVE__ADD__USER_ENV__PATH} --entrypoint ${CI_TRON__B2C_EXEC_SHELL} ${CI_TRON__B2C_IMAGE__IMAGE_UNDER_TEST} ${CI_TRON__B2C_EXEC_SHELL_FLAGS} '${CI_TRON__B2C_EXEC_CMD}'"
+
+    # Data-sharing
+    CI_TRON_EXECUTORCTL_EXTRA_ARGS__SHARE_FOLDER: "--share-directory ${CI_TRON__B2C_SHARE_FOLDER_PATH}"
+
+
+###
+# If a job extends from the ``.ci-tron-b2c-job-v1`` job, it may also inherit
+# from this one to make the DUT operate in a disk-less mode:
+#
+#   * Containers are pulled and stored on the gateway's public image store which
+#     is shared between all the DUTs;
+#   * The DUT accesses the gateway's image store through a read-only NFS share
+#     exported by the gateway, and by telling b2c's podman to use this share as
+#     an additional image store;
+#   * Local storage on the DUT is handled through a Network Block Device
+#     exported by the gateway;
+#   * Swap on the DUT is handled through a separate Network Block Device
+#     exported by the gateway.
+#
+# Because the containers are now pulled by the gateway instead of the DUT, it is
+# important to specify the architecture / platform of the test device. You may
+# do so by using :attr:`CI_TRON__B2C_DISKLESS_IMAGESTORE_PLATFORM`.
+#
+# **Introductory example**
+#
+# Here is a simplistic example of how to integrate a CI-tron-provided DUT in
+# your in GitLab CI pipelines:
+#
+# ``.gitlab-ci.yml``:
+#
+# .. code-block:: yaml
+#
+#   stages:
+#     - integration testing
+#
+#   variables:
+#     # WARNING: it is strongly advised to use a commit hash instead of ``main``
+#     CI_TRON_JOB_TEMPLATE_PROJECT_URL: https://gitlab.freedesktop.org/gfx-ci/ci-tron
+#     CI_TRON_JOB_TEMPLATE_COMMIT: main
+#
+#   include:
+#     - '${CI_TRON_JOB_TEMPLATE_PROJECT_URL}/-/raw/${CI_TRON_JOB_TEMPLATE_COMMIT}/.gitlab-ci/dut.yml'
+#
+#   test:
+#     stage: integration testing
+#     extends:
+#       - .ci-tron-b2c-job-v1
+#       - .ci-tron-b2c-diskless-v1
+#     variables:
+#       CI_TRON__B2C_DISKLESS_IMAGESTORE_PLATFORM: linux/amd64
+#       # Same variables you would set in ``.ci-tron-b2c-job-v1``
+#
+# .. attribute:: CI_TRON__B2C_DISKLESS_IMAGESTORE_PLATFORM
+#
+#   **This variable is required**
+#
+#   **Typical values**: linux/amd64, linux/arm64/v8, linux/arm/v6, linux/riscv64
+#
+#   The platform of the container that should be pulled and used for testing.
+#
+# .. attribute:: CI_TRON_NBD__STORAGE__SIZE
+#
+#   **default**: ``10G``
+#
+#   Specifies the size of the Network Block Device that will be created on the
+#   gateway and used by the DUT as storage for any file created during the job.
+#
+# .. attribute:: CI_TRON_NBD__STORAGE__MAX_CONNECTIONS
+#
+#   **default**: ``5``
+#
+#   Number of NBD connections that should be used to access the storage block
+#   device.
+#
+# .. attribute:: CI_TRON_NBD__SWAP__MAX_CONNECTIONS
+#
+#   **default**: ``5``
+#
+#   Number of NBD connections that should be used to access the swap block
+#   device.
+#
+#   .. note::
+#     The swap size can be controlled using :attr:`CI_TRON__B2C_SWAP_SIZE`.
+#
+# .. attribute:: CI_TRON__B2C_IMAGESTORE_FS_TYPE
+#
+#   **Supported values**: ``nfs`` (default), ``cifs``
+#
+#   Network filesystem that should be used to access the imagestore.
+#
+.ci-tron-b2c-diskless-v1:
+  variables:
+    # Telegraf
+    # NOTE: Rather than telling b2c to access the image by its label, we use the
+    # imageID that the gateway got when pulling the image. This ensures we use
+    # the right container and not one pulled by another after our pull but
+    # before the DUT starts using it
+    CI_TRON_IMAGESTORE__PUBLIC__IMAGES__TELEGRAF__NAME: $CI_TRON__B2C_TELEGRAF_IMAGE
+    CI_TRON_IMAGESTORE__PUBLIC__IMAGES__TELEGRAF__PLATFORM: $CI_TRON__B2C_DISKLESS_IMAGESTORE_PLATFORM
+    CI_TRON_IMAGESTORE__PUBLIC__IMAGES__TELEGRAF__TLS_VERIFY: false
+    CI_TRON__B2C_IMAGE__TELEGRAF: "{{ job.imagestore.public.telegraf.image_id }}"
+
+    # Machine registration
+    CI_TRON_IMAGESTORE__PUBLIC__IMAGES__MARS__NAME: $CI_TRON__B2C_MACHINE_REGISTRATION_IMAGE
+    CI_TRON_IMAGESTORE__PUBLIC__IMAGES__MARS__PLATFORM: $CI_TRON__B2C_DISKLESS_IMAGESTORE_PLATFORM
+    CI_TRON_IMAGESTORE__PUBLIC__IMAGES__MARS__TLS_VERIFY: false
+    CI_TRON__B2C_IMAGE__MACHINE_REGISTRATION: "{{ job.imagestore.public.mars.image_id }}"
+
+    # Image under test
+    CI_TRON_IMAGESTORE__PUBLIC__IMAGES__IMAGE_UNDER_TEST__NAME: $CI_TRON__B2C_IMAGE_UNDER_TEST
+    CI_TRON_IMAGESTORE__PUBLIC__IMAGES__IMAGE_UNDER_TEST__PLATFORM: $CI_TRON__B2C_DISKLESS_IMAGESTORE_PLATFORM
+    CI_TRON_IMAGESTORE__PUBLIC__IMAGES__IMAGE_UNDER_TEST__TLS_VERIFY: false
+    CI_TRON__B2C_IMAGE__IMAGE_UNDER_TEST: "{{ job.imagestore.public.image_under_test.image_id }}"
+
+    CI_TRON__B2C_IMAGESTORE_FS_TYPE: "nfs"
+    CI_TRON_KERNEL_CMDLINE__B2C_IMAGESTORE_FS: "{{ imagestore.mount('public').${CI_TRON__B2C_IMAGESTORE_FS_TYPE}.to_b2c_filesystem('publicimgstore') }}"
+    CI_TRON_KERNEL_CMDLINE__B2C_STORAGE: 'b2c.storage="additionalimagestores=publicimgstore"'
+
+    CI_TRON_NBD__STORAGE__SIZE: "10G"
+    CI_TRON_NBD__STORAGE__MAX_CONNECTIONS: 5
+    CI_TRON__B2C_CACHE_DEVICE: "/dev/nbd0"
+    CI_TRON_KERNEL_CMDLINE__B2C_NBD_STORAGE: "{{ job.nbd.storage.to_b2c_nbd('$CI_TRON__B2C_CACHE_DEVICE') }}"
+
+    CI_TRON_NBD__SWAP__SIZE: "${CI_TRON__B2C_SWAP_SIZE}"
+    CI_TRON_NBD__SWAP__MAX_CONNECTIONS: 5
+    CI_TRON_KERNEL_CMDLINE__B2C_SWAP: "b2c.swap=/dev/nbd1"
+    CI_TRON_KERNEL_CMDLINE__B2C_NBD_SWAP: "{{ job.nbd.swap.to_b2c_nbd('/dev/nbd1') }}"

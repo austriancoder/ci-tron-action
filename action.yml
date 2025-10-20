@@ -1,0 +1,44 @@
+name: 'CI-Tron GitHub Action'
+description: 'CI-Tron integration for bare-metal testing on GitHub Actions'
+author: 'gfx-ci'
+branding:
+  icon: 'cpu'
+  color: 'orange'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Action usage guide
+      shell: bash
+      run: |
+        cat << 'EOF'
+        ╔════════════════════════════════════════════════════════════════╗
+        ║           CI-Tron GitHub Action - Usage Guide                  ║
+        ╚════════════════════════════════════════════════════════════════╝
+
+        This action has multiple modes. Please use one of the sub-actions:
+
+        📦 Boot2Container (Recommended for most use cases):
+           - uses: your-org/citron-action/b2c@v1
+             with:
+               image: 'alpine:latest'
+               command: './test.sh'
+
+        🔧 Low-Level (For kernel/bootloader testing):
+           - uses: your-org/citron-action/low-level@v1
+             with:
+               session_end_regex: "^.*shutdown\\r?$"
+               job_success_regex: "^.*passed\\r?$"
+               kernel_url: 'https://example.com/kernel'
+
+        💿 Diskless (For systems without local storage):
+           - uses: your-org/citron-action/diskless@v1
+             with:
+               platform: 'linux/amd64'
+               image: 'ubuntu:22.04'
+               command: './test.sh'
+
+        📖 Documentation: https://github.com/your-org/citron-action
+
+        EOF
+        exit 1

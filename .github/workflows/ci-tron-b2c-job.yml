@@ -1,0 +1,27 @@
+name: ci-tron-b2c-job test
+on:
+  workflow_dispatch:
+jobs:
+  test-b2c-simple:
+    runs-on:
+      - cpu:arch:x86_64
+      - farm:vivian-christian
+
+    name: 'Simple Test'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: echo Hello ...
+        uses: ./ci-tron-b2c-job #gfx-ci/ci-tron-action/ci-tron-b2c-job@v1
+        env:
+          CI_TRON_USE_LOCAL_DUT_YML: 1
+          CI_TRON_JOB_TEMPLATE_PROJECT_URL: https://gitlab.freedesktop.org/gfx-ci/ci-tron
+          CI_TRON_JOB_TEMPLATE_COMMIT: main
+          CI_TRON_KERNEL__URL: 'https://gitlab.freedesktop.org/gfx-ci/boot2container/-/releases/v0.9.17/downloads/linux-x86_64'
+          CI_TRON_INITRAMFS__B2C__URL: 'https://gitlab.freedesktop.org/gfx-ci/boot2container/-/releases/v0.9.17/downloads/initramfs.linux_amd64.cpio.xz'
+          CI_TRON__B2C_EXEC_SHELL: "/bin/sh"
+        with:
+          image: registry.freedesktop.org/gfx-ci/ci-tron/executorctl:latest
+          command: |
+            echo Hello ...

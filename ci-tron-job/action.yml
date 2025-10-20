@@ -1,0 +1,31 @@
+name: 'ci-tron Low-Level Job'
+description: 'Low-level ci-tron integration for kernel/bootloader testing'
+branding:
+  icon: 'settings'
+  color: 'gray'
+
+outputs:
+  exit_code:
+    description: 'Job exit code'
+    value: ${{ steps.ci-tron-job.outputs.exit_code }}
+
+  status:
+    description: 'Job status'
+    value: ${{ steps.ci-tron-job.outputs.status }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Run ci-tron low-level job
+      id: ci-tron-job
+      shell: bash
+      env:
+        JOB_TYPE: ci-tron-job
+        CI_TRON_JOB_SCRIPT_PATH: ${{ github.run_id }}.sh
+        CI_JOB_NAME_SLUG: ${{ github.job }}-${{ github.run_id }}
+        CI_RUNNER_DESCRIPTION: ${{ runner.name }}
+      run: |
+        set -eu
+
+        # Execute shared ci-tron job script
+        bash ${{ github.action_path }}/../scripts/run-ci-tron-job.sh
