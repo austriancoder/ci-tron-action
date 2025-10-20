@@ -1,0 +1,27 @@
+name: ci-tron-job test
+on:
+  workflow_dispatch:
+
+jobs:
+  hello:
+    runs-on:
+      - cpu:arch:x86_64
+      - farm:vivian-christian
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Hello world
+        uses: ./ci-tron-job #gfx-ci/ci-tron-action/ci-tron-job@v1
+        env:
+          CI_TRON_JOB_TEMPLATE_PROJECT_URL: https://gitlab.freedesktop.org/gfx-ci/ci-tron
+          CI_TRON_JOB_TEMPLATE_COMMIT: main
+          CI_TRON_PATTERN__SESSION_END__REGEX: '^.*It''s now safe to turn off your computer\r?$'
+          CI_TRON_PATTERN__JOB_SUCCESS__REGEX: 'Execution is over, pipeline status: 0\r?$'
+          CI_TRON_KERNEL__URL: https://gitlab.freedesktop.org/gfx-ci/boot2container/-/releases/v0.9.15.1/downloads/linux-x86_64
+          CI_TRON_INITRAMFS__B2C__URL: https://gitlab.freedesktop.org/gfx-ci/boot2container/-/releases/v0.9.15.1/downloads/initramfs.linux_amd64.cpio.xz
+          CI_TRON_KERNEL_CMDLINE__SALAD: SALAD.machine_id={{ dut.id }} console={{ dut.local_tty_device }},115200
+          CI_TRON_KERNEL_CMDLINE__B2C_NTP_PEER: b2c.ntp_peer=ci-gateway
+          CI_TRON_KERNEL_CMDLINE__B2C_RUN: b2c.run="--tls-verify=false -t {{ registry.to_local_proxy('registry.freedesktop.org/gfx-ci/ci-tron/executorctl:latest') }} echo Hello world"
+          CI_TRON_KERNEL_CMDLINE__B2C_POWEROFF: b2c.poweroff_delay=15
